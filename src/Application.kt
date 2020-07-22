@@ -10,13 +10,20 @@ import io.ktor.http.content.resources
 import io.ktor.http.content.static
 import io.ktor.routing.get
 import io.ktor.routing.routing
+import io.ktor.util.KtorExperimentalAPI
 import kotlinx.html.*
 
 fun main(args: Array<String>): Unit = io.ktor.server.netty.EngineMain.main(args)
 
-@Suppress("unused") // Referenced in application.conf
+@KtorExperimentalAPI
+@Suppress("unused")
 @kotlin.jvm.JvmOverloads
 fun Application.module(testing: Boolean = false) {
+    val airtableClient = AirtableClient(
+            apiKey = environment.config.property("krussian.airtable.apiKey").getString(),
+            baseId = environment.config.property("krussian.airtable.baseId").getString()
+    )
+
     routing {
         get("/") {
             call.respondHtmlTemplate(AppTemplate()) {
@@ -29,13 +36,16 @@ fun Application.module(testing: Boolean = false) {
         }
 
         get("/decks/all") {
+            val decks = airtableClient.getDecks()
             call.respondHtmlTemplate(AppTemplate()) {
                 pageTitle { +"All Decks" }
                 content {
                     h3 { +"All Decks" }
                     ul {
-                        for (n in 1..10) {
-                            li { +"$n" }
+                        for (deck in decks) {
+                            li {
+                                a(href = deck.fields.url) { +deck.fields.name }
+                            }
                         }
                     }
                 }

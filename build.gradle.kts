@@ -40,6 +40,10 @@ dependencies {
     implementation(ktor("server-netty"))
     implementation(ktor("html-builder"))
     implementation(ktor("server-host-common"))
+    implementation(ktor("client-core"))
+    implementation(ktor("client-cio"))
+    implementation(ktor("client-json-jvm"))
+    implementation(ktor("client-gson"))
     testImplementation(ktor("server-tests"))
 
     implementation("ch.qos.logback:logback-classic:$logbackVersion")
