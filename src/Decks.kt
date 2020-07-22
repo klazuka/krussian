@@ -9,6 +9,8 @@ import io.ktor.client.features.json.JsonFeature
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.host
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter.ISO_LOCAL_DATE
 
 class AirtableClient(
         val apiKey: String,
@@ -38,8 +40,24 @@ class AirtableClient(
                         name = deck.fields.name,
                         url = deck.fields.url,
                         scores = actualScores,
-                        dueDate = "TODO"
+                        dueDate = nextDueDate(actualScores)
                 )
+            }
+
+    private fun nextDueDate(scores: List<Score>): String {
+        if (scores.isEmpty()) return LocalDate.now().format(ISO_LOCAL_DATE)
+        val mostRecentScore = scores.last()
+        val numDaysOffset = fibonacci(scores.size)
+        return LocalDate.parse(mostRecentScore.fields.date, ISO_LOCAL_DATE)
+                .plusDays(numDaysOffset)
+                .format(ISO_LOCAL_DATE)
+    }
+
+    private fun fibonacci(n: Int): Long =
+            when (n) {
+                0 -> 1
+                1 -> 1
+                else -> fibonacci(n - 2) + fibonacci(n - 1)
             }
 
     private fun resolveScores(allScores: List<Score>, refs: List<String>): List<Score> =
