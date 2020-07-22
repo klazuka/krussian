@@ -12,6 +12,8 @@ import io.ktor.routing.get
 import io.ktor.routing.routing
 import io.ktor.util.KtorExperimentalAPI
 import kotlinx.html.*
+import kotlinx.html.ThScope.col
+import kotlinx.html.ThScope.row
 
 fun main(args: Array<String>): Unit = io.ktor.server.netty.EngineMain.main(args)
 
@@ -40,11 +42,23 @@ fun Application.module(testing: Boolean = false) {
             call.respondHtmlTemplate(AppTemplate()) {
                 pageTitle { +"All Decks" }
                 content {
-                    h3 { +"All Decks" }
-                    ul {
-                        for (deck in decks) {
-                            li {
-                                a(href = deck.fields.url) { +deck.fields.name }
+                    table(classes = "table") {
+                        thead {
+                            tr {
+                                th(scope = col) { +"Name" }
+                                th(scope = col) { +"Due" }
+                                th(scope = col) { +"Repetitions" }
+                            }
+                        }
+                        tbody {
+                            for (deck in decks) {
+                                tr {
+                                    th(scope = row) {
+                                        a(href = deck.url) { +deck.name }
+                                    }
+                                    td { +"${deck.dueDate}" }
+                                    td { +"${deck.scores.size}" }
+                                }
                             }
                         }
                     }

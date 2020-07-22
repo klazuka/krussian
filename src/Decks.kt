@@ -25,15 +25,41 @@ class AirtableClient(
     }
 
     suspend fun getDecks(): List<Deck> {
-        return client.get<ListDecksResponse>(path = "/v0/$baseId/Decks").records
+        val rawDecks = client.get<ListDecksResponse>(path = "/v0/$baseId/Decks").records
+        val scores = client.get<ListScoresResponse>(path = "/v0/$baseId/Scores").records
+        return resolveDecks(rawDecks, scores)
     }
+
+    private fun resolveDecks(decks: List<RawDeck>, scores: List<Score>): List<Deck> =
+            decks.map { deck ->
+                val actualScores = resolveScores(scores, deck.fields.scoreRefs)
+                Deck(
+                        id = deck.id,
+                        name = deck.fields.name,
+                        url = deck.fields.url,
+                        scores = actualScores,
+                        dueDate = "TODO"
+                )
+            }
+
+    private fun resolveScores(allScores: List<Score>, refs: List<String>): List<Score> =
+            // TODO sort the result by date from oldest to newest
+            allScores.filter { it.id in refs }
 }
 
-data class ListDecksResponse(
-        val records: List<Deck>
+data class Deck(
+        val id: String,
+        val name: String,
+        val url: String,
+        val scores: List<Score>,
+        val dueDate: String
 )
 
-data class Deck(
+data class ListDecksResponse(
+        val records: List<RawDeck>
+)
+
+data class RawDeck(
         val id: String,
         val fields: DeckFields
 )
@@ -43,5 +69,28 @@ data class DeckFields(
         val name: String,
 
         @SerializedName("URL")
-        val url: String
+        val url: String,
+
+        @SerializedName("Scores")
+        val scoreRefs: List<String>
+)
+
+data class ListScoresResponse(
+        val records: List<Score>
+)
+
+data class Score(
+        val id: String,
+        val fields: ScoreFields
+)
+
+data class ScoreFields(
+        @SerializedName("Num Correct")
+        val numCorrect: Int,
+
+        @SerializedName("Num Total")
+        val numTotal: Int,
+
+        @SerializedName("Date")
+        val date: String
 )
