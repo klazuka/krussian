@@ -27,14 +27,34 @@ class AirtableClient(
     }
 
     suspend fun getDecks(): List<Deck> {
-        val rawDecks = client.get<ListDecksResponse>(path = "/v0/$baseId/Decks").records
-        val scores = client.get<ListScoresResponse>(path = "/v0/$baseId/Scores").records
+        val rawDecks: List<RawDeck> = getAll("Decks") { client.get<ListDecksResponse>(it) }
+        val scores: List<Score> = getAll("Scores") { client.get<ListScoresResponse>(it) }
         return resolveDecks(rawDecks, scores)
+    }
+
+    /// Fetches all pages from the API.
+    private inline fun <T> getAll(table: String, fetch: (String) -> AirtableResponse<T>): List<T> {
+        // NOTE: I couldn't figure out how to handle the pagination using Kotlin generics + Gson.
+        //       The crux of the problem is that if you use an interface or an abstract class to
+        //       model the paginated response envelope, then Gson cannot construct it when it does
+        //       it's deserialization magic. So instead I just made it the caller's responsibility
+        //       to provide a concrete response type. There's probably a smarter way to do this.
+        val acc = mutableListOf<T>()
+        var offset: String? = null
+        do {
+            var path = "/v0/$baseId/$table"
+            if (offset != null)
+                path += "?offset=$offset"
+            val resp = fetch(path)
+            acc += resp.records
+            offset = resp.offset
+        } while (offset != null)
+        return acc
     }
 
     private fun resolveDecks(decks: List<RawDeck>, scores: List<Score>): List<Deck> =
             decks.map { deck ->
-                val actualScores = resolveScores(scores, deck.fields.scoreRefs)
+                val actualScores = resolveScoreRefs(scores, deck.fields.scoreRefs)
                 Deck(
                         id = deck.id,
                         name = deck.fields.name,
@@ -44,14 +64,12 @@ class AirtableClient(
                 )
             }
 
-    private fun nextDueDate(scores: List<Score>): String {
-        if (scores.isEmpty()) return LocalDate.now().format(ISO_LOCAL_DATE)
-        val mostRecentScore = scores.last()
-        val numDaysOffset = fibonacci(scores.size)
-        return LocalDate.parse(mostRecentScore.fields.date, ISO_LOCAL_DATE)
-                .plusDays(numDaysOffset)
-                .format(ISO_LOCAL_DATE)
-    }
+    private fun nextDueDate(scores: List<Score>): LocalDate =
+            when {
+                scores.isEmpty() -> LocalDate.now()
+                else -> LocalDate.parse(scores.last().fields.date, ISO_LOCAL_DATE)
+                        .plusDays(fibonacci(scores.size))
+            }
 
     private fun fibonacci(n: Int): Long =
             when (n) {
@@ -60,9 +78,9 @@ class AirtableClient(
                 else -> fibonacci(n - 2) + fibonacci(n - 1)
             }
 
-    private fun resolveScores(allScores: List<Score>, refs: List<String>): List<Score> =
-            // TODO sort the result by date from oldest to newest
+    private fun resolveScoreRefs(allScores: List<Score>, refs: List<String>): List<Score> =
             allScores.filter { it.id in refs }
+                    .sortedBy { it.fields.date }
 }
 
 data class Deck(
@@ -70,12 +88,18 @@ data class Deck(
         val name: String,
         val url: String,
         val scores: List<Score>,
-        val dueDate: String
+        val dueDate: LocalDate
 )
 
+abstract class AirtableResponse<T> {
+    abstract val records: List<T>
+    abstract val offset: String?
+}
+
 data class ListDecksResponse(
-        val records: List<RawDeck>
-)
+        override val records: List<RawDeck>,
+        override val offset: String?
+) : AirtableResponse<RawDeck>()
 
 data class RawDeck(
         val id: String,
@@ -94,8 +118,9 @@ data class DeckFields(
 )
 
 data class ListScoresResponse(
-        val records: List<Score>
-)
+        override val records: List<Score>,
+        override val offset: String?
+) : AirtableResponse<Score>()
 
 data class Score(
         val id: String,

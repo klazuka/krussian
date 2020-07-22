@@ -13,7 +13,7 @@ import io.ktor.routing.routing
 import io.ktor.util.KtorExperimentalAPI
 import kotlinx.html.*
 import kotlinx.html.ThScope.col
-import kotlinx.html.ThScope.row
+import java.time.format.DateTimeFormatter.ISO_LOCAL_DATE
 
 fun main(args: Array<String>): Unit = io.ktor.server.netty.EngineMain.main(args)
 
@@ -38,7 +38,7 @@ fun Application.module(testing: Boolean = false) {
         }
 
         get("/decks/all") {
-            val decks = airtableClient.getDecks()
+            val decks = airtableClient.getDecks().sortedBy { it.dueDate }
             call.respondHtmlTemplate(AppTemplate()) {
                 pageTitle { +"All Decks" }
                 content {
@@ -53,10 +53,10 @@ fun Application.module(testing: Boolean = false) {
                         tbody {
                             for (deck in decks) {
                                 tr {
-                                    th(scope = row) {
+                                    th {
                                         a(href = deck.url) { +deck.name }
                                     }
-                                    td { +"${deck.dueDate}" }
+                                    td { +deck.dueDate.format(ISO_LOCAL_DATE) }
                                     td { +"${deck.scores.size}" }
                                 }
                             }
