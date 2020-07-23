@@ -13,7 +13,9 @@ import io.ktor.routing.routing
 import io.ktor.util.KtorExperimentalAPI
 import kotlinx.html.*
 import kotlinx.html.ThScope.col
+import java.time.LocalDate
 import java.time.format.DateTimeFormatter.ISO_LOCAL_DATE
+import kotlin.math.roundToInt
 
 fun main(args: Array<String>): Unit = io.ktor.server.netty.EngineMain.main(args)
 
@@ -67,11 +69,29 @@ fun Application.module(testing: Boolean = false) {
         }
 
         get("/decks/due") {
+            val decks = airtableClient.getDecks()
+                    .filter { it.dueDate < LocalDate.now().plusDays(1) }
+                    .sortedBy { it.dueDate }
             call.respondHtmlTemplate(AppTemplate()) {
                 pageTitle { +"Due Decks" }
                 content {
-                    h3 { +"Due Decks" }
-                    p { +"fire" }
+                    for (deck in decks) {
+                        div(classes = "card mt-5") {
+                            div(classes = "card-body") {
+                                h5(classes = "card-title") {
+                                    a(href = deck.url) { +deck.name }
+                                }
+                                h6(classes = "card-subtitle") { +deck.dueDate.format(ISO_LOCAL_DATE) }
+                                p(classes = "card-text") {
+                                    when (val s = deck.scores.lastOrNull()) {
+                                        null -> +"No scores"
+                                        else -> +"Last score: ${(100.0 * s.fields.numCorrect / s.fields.numTotal).roundToInt()}%"
+                                    }
+                                }
+                            }
+                        }
+
+                    }
                 }
             }
         }
