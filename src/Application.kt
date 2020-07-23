@@ -44,6 +44,15 @@ fun Application.module(testing: Boolean = false) {
             call.respondHtmlTemplate(AppTemplate()) {
                 pageTitle { +"All Decks" }
                 content {
+                    h2 { +"Decks" }
+                    ul(classes = "nav nav-pills") {
+                        li(classes = "nav-item") {
+                            a(classes = "nav-link", href = "/decks/due") { +"Due" }
+                        }
+                        li(classes = "nav-item") {
+                            a(classes = "nav-link active", href = "/decks/all") { +"All" }
+                        }
+                    }
                     table(classes = "table") {
                         thead {
                             tr {
@@ -75,6 +84,15 @@ fun Application.module(testing: Boolean = false) {
             call.respondHtmlTemplate(AppTemplate()) {
                 pageTitle { +"Due Decks" }
                 content {
+                    h2 { +"Decks" }
+                    ul(classes = "nav nav-pills") {
+                        li(classes = "nav-item") {
+                            a(classes = "nav-link active", href = "/decks/due") { +"Due" }
+                        }
+                        li(classes = "nav-item") {
+                            a(classes = "nav-link", href = "/decks/all") { +"All" }
+                        }
+                    }
                     for (deck in decks) {
                         div(classes = "card mt-5") {
                             div(classes = "card-body") {
@@ -146,11 +164,10 @@ class AppTemplate : Template<HTML> {
         }
         body {
             div(classes = "container") {
-                nav(classes = "navbar navbar-expand navbar-light bg-light") {
+                nav(classes = "navbar navbar-expand navbar-light bg-light mb-3") {
                     a(classes = "navbar-brand", href = "/") { +"Krussian" }
                     div(classes = "navbar-nav mr-auto") {
-                        a(classes = "nav-link", href = "/decks/due") { +"Due" }
-                        a(classes = "nav-link", href = "/decks/all") { +"All" }
+                        a(classes = "nav-link", href = "/decks/due") { +"Decks" }
                         a(classes = "nav-link", href = "/resources") { +"Resources" }
                     }
                 }
