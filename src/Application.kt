@@ -2,11 +2,12 @@ package com.klazuka
 
 import com.auth0.jwt.JWT
 import com.auth0.jwt.algorithms.Algorithm
-import com.auth0.jwt.interfaces.Payload
 import com.google.gson.annotations.SerializedName
-import io.ktor.application.*
+import io.ktor.application.Application
+import io.ktor.application.call
+import io.ktor.application.install
+import io.ktor.application.log
 import io.ktor.auth.*
-import io.ktor.auth.jwt.jwt
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.features.json.GsonSerializer
@@ -22,10 +23,11 @@ import io.ktor.html.insert
 import io.ktor.html.respondHtmlTemplate
 import io.ktor.http.HttpStatusCode.Companion.Unauthorized
 import io.ktor.http.Parameters
+import io.ktor.http.URLBuilder
 import io.ktor.http.content.resources
 import io.ktor.http.content.static
 import io.ktor.response.respond
-import io.ktor.response.respondText
+import io.ktor.response.respondRedirect
 import io.ktor.routing.get
 import io.ktor.routing.routing
 import io.ktor.sessions.*
@@ -52,18 +54,7 @@ data class UserPrincipal(
         val nickname: String?,
         val name: String?,
         val pictureUrl: String?
-) : Principal {
-    companion object {
-        fun fromJWT(payload: Payload): UserPrincipal {
-            return UserPrincipal(
-                    subject = payload.subject,
-                    nickname = payload.getClaim("nickname")?.asString(),
-                    name = payload.getClaim("name")?.asString(),
-                    pictureUrl = payload.getClaim("picture")?.asString()
-            )
-        }
-    }
-}
+) : Principal
 
 data class UserSession(
         val subject: String
@@ -86,21 +77,6 @@ fun Application.module(testing: Boolean = false) {
     }
 
     install(Authentication) {
-        jwt {
-            realm = "krussian"
-            verifier(
-                    JWT.require(Algorithm.HMAC256(auth0.clientSecret))
-                            .withAudience(auth0.audience)
-                            .withIssuer(auth0.domain)
-                            .build())
-            validate { credential ->
-                when (auth0.audience) {
-                    in credential.payload.audience -> UserPrincipal.fromJWT(credential.payload)
-                    else -> null
-                }
-            }
-        }
-
         session<UserSession>("SESSION_AUTH") {
             validate { session ->
                 // TODO: query the other fields or maybe remove them from the Principal?
@@ -111,6 +87,8 @@ fun Application.module(testing: Boolean = false) {
                         pictureUrl = null
                 )
             }
+
+            challenge("/login")
         }
     }
 
@@ -129,32 +107,21 @@ fun Application.module(testing: Boolean = false) {
     )
 
     routing {
-        get("/") {
-            call.respondHtmlTemplate(AppTemplate(environment)) {
-                pageTitle { +"Home" }
-                content {
-                    h3 { +"Home" }
-                    p { +"дом sweet дом" }
-                }
+        get("/login") {
+            val u = URLBuilder("https://klazuka.us.auth0.com/authorize")
+            u.parameters.apply {
+                append("response_type", "code")
+                append("client_id", auth0.clientId)
+                append("redirect_uri", auth0.callbackUrl)
+                append("scope", "openid profile")
+                append("state", "foobar123")
             }
+            call.respondRedirect(u.buildString())
         }
-        authenticate("SESSION_AUTH") {
-            get("/me") {
-                val user = call.authentication.principal<UserPrincipal>()
-                if (user == null) {
-                    // TODO: lame
-                    call.respond(Unauthorized)
-                    return@get
-                }
-                log.info("Using principal: $user")
-                call.respondHtmlTemplate(AppTemplate(environment)) {
-                    pageTitle { +"Me" }
-                    content {
-                        h3 { +"Me" }
-                        p { +user.subject }
-                    }
-                }
-            }
+
+        get("/logout") {
+            call.sessions.clear<UserSession>()
+            call.respondRedirect("/")
         }
 
         get("/callback") {
@@ -193,106 +160,140 @@ fun Application.module(testing: Boolean = false) {
 
             call.sessions.set(UserSession(subject = subject))
 
-            call.respondText("done")
+            call.respondRedirect("/me")
         }
 
-        get("/decks/all") {
-            val decks = airtableClient.getDecks().sortedBy { it.dueDate }
-            call.respondHtmlTemplate(AppTemplate(environment)) {
-                pageTitle { +"All Decks" }
-                content {
-                    h2 { +"Decks" }
-                    ul(classes = "nav nav-pills") {
-                        li(classes = "nav-item") {
-                            a(classes = "nav-link", href = "/decks/due") { +"Due" }
-                        }
-                        li(classes = "nav-item") {
-                            a(classes = "nav-link active", href = "/decks/all") { +"All" }
+        authenticate("SESSION_AUTH") {
+            get("/me") {
+                val user = call.authentication.principal<UserPrincipal>()
+                if (user == null) {
+                    // TODO: lame
+                    call.respond(Unauthorized)
+                    return@get
+                }
+                log.info("Using principal: $user")
+                call.respondHtmlTemplate(AppTemplate(user)) {
+                    pageTitle { +"Me" }
+                    content {
+                        h3 { +"Me" }
+                        p { +user.subject }
+                        p {
+                            a(href = "/logout") { +"Logout" }
                         }
                     }
-                    table(classes = "table") {
-                        thead {
-                            tr {
-                                th(scope = col) { +"Name" }
-                                th(scope = col) { +"Due" }
-                                th(scope = col) { +"Repetitions" }
+                }
+            }
+        }
+
+        authenticate("SESSION_AUTH", optional = true) {
+            get("/") {
+                call.respondHtmlTemplate(AppTemplate(call.principal())) {
+                    pageTitle { +"Home" }
+                    content {
+                        h3 { +"Home" }
+                        p { +"дом sweet дом" }
+                    }
+                }
+            }
+
+            get("/decks/all") {
+                val decks = airtableClient.getDecks().sortedBy { it.dueDate }
+                call.respondHtmlTemplate(AppTemplate(call.principal())) {
+                    pageTitle { +"All Decks" }
+                    content {
+                        h2 { +"Decks" }
+                        ul(classes = "nav nav-pills") {
+                            li(classes = "nav-item") {
+                                a(classes = "nav-link", href = "/decks/due") { +"Due" }
+                            }
+                            li(classes = "nav-item") {
+                                a(classes = "nav-link active", href = "/decks/all") { +"All" }
                             }
                         }
-                        tbody {
-                            for (deck in decks) {
+                        table(classes = "table") {
+                            thead {
                                 tr {
-                                    th {
+                                    th(scope = col) { +"Name" }
+                                    th(scope = col) { +"Due" }
+                                    th(scope = col) { +"Repetitions" }
+                                }
+                            }
+                            tbody {
+                                for (deck in decks) {
+                                    tr {
+                                        th {
+                                            a(href = deck.url) { +deck.name }
+                                        }
+                                        td { +deck.dueDate.format(ISO_LOCAL_DATE) }
+                                        td { +"${deck.scores.size}" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            get("/decks/due") {
+                val decks = airtableClient.getDecks()
+                        .filter { it.dueDate < LocalDate.now().plusDays(1) }
+                        .sortedBy { it.dueDate }
+                call.respondHtmlTemplate(AppTemplate(call.principal())) {
+                    pageTitle { +"Due Decks" }
+                    content {
+                        h2 { +"Decks" }
+                        ul(classes = "nav nav-pills") {
+                            li(classes = "nav-item") {
+                                a(classes = "nav-link active", href = "/decks/due") { +"Due" }
+                            }
+                            li(classes = "nav-item") {
+                                a(classes = "nav-link", href = "/decks/all") { +"All" }
+                            }
+                        }
+                        for (deck in decks) {
+                            div(classes = "card mt-5") {
+                                div(classes = "card-body") {
+                                    h5(classes = "card-title") {
                                         a(href = deck.url) { +deck.name }
                                     }
-                                    td { +deck.dueDate.format(ISO_LOCAL_DATE) }
-                                    td { +"${deck.scores.size}" }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        get("/decks/due") {
-            val decks = airtableClient.getDecks()
-                    .filter { it.dueDate < LocalDate.now().plusDays(1) }
-                    .sortedBy { it.dueDate }
-            call.respondHtmlTemplate(AppTemplate(environment)) {
-                pageTitle { +"Due Decks" }
-                content {
-                    h2 { +"Decks" }
-                    ul(classes = "nav nav-pills") {
-                        li(classes = "nav-item") {
-                            a(classes = "nav-link active", href = "/decks/due") { +"Due" }
-                        }
-                        li(classes = "nav-item") {
-                            a(classes = "nav-link", href = "/decks/all") { +"All" }
-                        }
-                    }
-                    for (deck in decks) {
-                        div(classes = "card mt-5") {
-                            div(classes = "card-body") {
-                                h5(classes = "card-title") {
-                                    a(href = deck.url) { +deck.name }
-                                }
-                                h6(classes = "card-subtitle") { +deck.dueDate.format(ISO_LOCAL_DATE) }
-                                p(classes = "card-text") {
-                                    when (val s = deck.scores.lastOrNull()) {
-                                        null -> +"No scores"
-                                        else -> +"Last score: ${(100.0 * s.fields.numCorrect / s.fields.numTotal).roundToInt()}%"
+                                    h6(classes = "card-subtitle") { +deck.dueDate.format(ISO_LOCAL_DATE) }
+                                    p(classes = "card-text") {
+                                        when (val s = deck.scores.lastOrNull()) {
+                                            null -> +"No scores"
+                                            else -> +"Last score: ${(100.0 * s.fields.numCorrect / s.fields.numTotal).roundToInt()}%"
+                                        }
                                     }
                                 }
                             }
-                        }
 
+                        }
                     }
                 }
             }
-        }
 
-        get("/resources") {
-            call.respondHtmlTemplate(AppTemplate(environment)) {
-                pageTitle { +"Resources" }
-                content {
-                    div(classes = "card") {
-                        div(classes = "card-body") {
-                            h5(classes = "card-title") { +"Links" }
-                            p {
-                                a(href = "https://russianwithmax.com") { +"RussianWithMax" }
-                                +" - podcast for non-native speakers"
-                            }
-                            p {
-                                a(href = "https://www.orusskomporusski.com") { +"О русском по-русски" }
-                                +" - YouTube channel for Russian grammar, vocab, etc."
-                            }
-                            p {
-                                a(href = "https://meduza.io") { +"Meduza" }
-                                +" - news, podcasts"
-                            }
-                            p {
-                                a(href = "https://arzamas.academy") { +"Arzamas" }
-                                +" - art, culture, history, podcasts"
+            get("/resources") {
+                call.respondHtmlTemplate(AppTemplate(call.principal())) {
+                    pageTitle { +"Resources" }
+                    content {
+                        div(classes = "card") {
+                            div(classes = "card-body") {
+                                h5(classes = "card-title") { +"Links" }
+                                p {
+                                    a(href = "https://russianwithmax.com") { +"RussianWithMax" }
+                                    +" - podcast for non-native speakers"
+                                }
+                                p {
+                                    a(href = "https://www.orusskomporusski.com") { +"О русском по-русски" }
+                                    +" - YouTube channel for Russian grammar, vocab, etc."
+                                }
+                                p {
+                                    a(href = "https://meduza.io") { +"Meduza" }
+                                    +" - news, podcasts"
+                                }
+                                p {
+                                    a(href = "https://arzamas.academy") { +"Arzamas" }
+                                    +" - art, culture, history, podcasts"
+                                }
                             }
                         }
                     }
@@ -307,7 +308,7 @@ fun Application.module(testing: Boolean = false) {
     }
 }
 
-class AppTemplate(val environment: ApplicationEnvironment) : Template<HTML> {
+class AppTemplate(val user: UserPrincipal?) : Template<HTML> {
     val content = Placeholder<HtmlBlockTag>()
     val pageTitle = Placeholder<TITLE>()
 
@@ -319,7 +320,6 @@ class AppTemplate(val environment: ApplicationEnvironment) : Template<HTML> {
             }
             link(rel = "stylesheet", href = "https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css")
         }
-        val loginUrl = "https://klazuka.us.auth0.com/authorize?response_type=code&client_id=${environment.config.property("krussian.auth0.clientId").getString()}&redirect_uri=${environment.config.property("krussian.auth0.callbackUrl").getString()}&scope=openid%20profile&state=foobar123"
         body {
             div(classes = "container") {
                 nav(classes = "navbar navbar-expand navbar-light bg-light mb-3") {
@@ -327,10 +327,11 @@ class AppTemplate(val environment: ApplicationEnvironment) : Template<HTML> {
                     div(classes = "navbar-nav mr-auto") {
                         a(classes = "nav-link", href = "/decks/due") { +"Decks" }
                         a(classes = "nav-link", href = "/resources") { +"Resources" }
+                        if (user != null)
+                            a(classes = "nav-link", href = "/me") { +user.subject }
+                        else
+                            a(classes = "nav-link", href = "/login") { +"Login" }
                     }
-                }
-                p {
-                    a(href = loginUrl) { +"Login" }
                 }
                 insert(content)
             }
