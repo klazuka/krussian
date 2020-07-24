@@ -50,6 +50,7 @@ dependencies {
     implementation(ktor("client-json-jvm"))
     implementation(ktor("client-gson"))
     testImplementation(ktor("server-tests"))
+    testImplementation("com.nhaarman.mockitokotlin2:mockito-kotlin:2.2.0")
 
     implementation("ch.qos.logback:logback-classic:$logbackVersion")
 }

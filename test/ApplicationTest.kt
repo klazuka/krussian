@@ -1,24 +1,41 @@
 package com.klazuka
 
-import io.ktor.application.*
-import io.ktor.response.*
-import io.ktor.request.*
-import io.ktor.routing.*
-import io.ktor.http.*
-import io.ktor.html.*
-import kotlinx.html.*
-import io.ktor.content.*
-import io.ktor.http.content.*
-import kotlin.test.*
-import io.ktor.server.testing.*
+import com.nhaarman.mockitokotlin2.mock
+import io.ktor.http.HttpMethod
+import io.ktor.http.HttpStatusCode
+import io.ktor.server.testing.contentType
+import io.ktor.server.testing.handleRequest
+import io.ktor.server.testing.withTestApplication
+import io.ktor.util.KtorExperimentalAPI
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
+@KtorExperimentalAPI
 class ApplicationTest {
+    val airtableClient: AirtableClient = mock()
+    val authClient: AuthClient = mock()
+
     @Test
     fun testRoot() {
-        withTestApplication({ module(testing = true) }) {
+        withTestApplication({
+            moduleWithDeps(true, airtableClient, authClient)
+        }) {
             handleRequest(HttpMethod.Get, "/").apply {
                 assertEquals(HttpStatusCode.OK, response.status())
-                assertEquals("HELLO WORLD!", response.content)
+                assertTrue { "text/html" in response.contentType().toString() }
+            }
+        }
+    }
+
+    @Test
+    fun `profile page requires auth and redirects to login page`() {
+        withTestApplication({
+            moduleWithDeps(true, airtableClient, authClient)
+        }) {
+            handleRequest(HttpMethod.Get, "/me").apply {
+                assertEquals(HttpStatusCode.Found, response.status())
+                assertEquals("/login", response.headers["Location"])
             }
         }
     }

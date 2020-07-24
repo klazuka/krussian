@@ -1,20 +1,11 @@
 package com.klazuka
 
-import com.auth0.jwt.JWT
-import com.auth0.jwt.algorithms.Algorithm
 import com.google.gson.annotations.SerializedName
 import io.ktor.application.Application
 import io.ktor.application.call
 import io.ktor.application.install
 import io.ktor.application.log
 import io.ktor.auth.*
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
-import io.ktor.client.features.json.GsonSerializer
-import io.ktor.client.features.json.JsonFeature
-import io.ktor.client.features.logging.LogLevel
-import io.ktor.client.features.logging.Logging
-import io.ktor.client.request.forms.submitForm
 import io.ktor.features.ContentNegotiation
 import io.ktor.gson.gson
 import io.ktor.html.Placeholder
@@ -22,8 +13,6 @@ import io.ktor.html.Template
 import io.ktor.html.insert
 import io.ktor.html.respondHtmlTemplate
 import io.ktor.http.HttpStatusCode.Companion.Unauthorized
-import io.ktor.http.Parameters
-import io.ktor.http.URLBuilder
 import io.ktor.http.content.resources
 import io.ktor.http.content.static
 import io.ktor.response.respond
@@ -63,21 +52,27 @@ data class UserSession(
 @KtorExperimentalAPI
 @Suppress("unused")
 @kotlin.jvm.JvmOverloads
-fun Application.module(testing: Boolean = false) {
+fun Application.module(testing: Boolean = false) =
+        moduleWithDeps(
+                testing = testing,
+                airtableClient = RealAirtableClient(environment.config),
+                authClient = RealAuthClient(environment.config)
+        )
+
+@KtorExperimentalAPI
+@Suppress("unused")
+@kotlin.jvm.JvmOverloads
+fun Application.moduleWithDeps(
+        testing: Boolean = false,
+        airtableClient: AirtableClient,
+        authClient: AuthClient
+) {
     install(ContentNegotiation) {
         gson {}
     }
 
-    val auth0 = object {
-        val domain = environment.config.property("krussian.auth0.domain").getString()
-        val clientId = environment.config.property("krussian.auth0.clientId").getString()
-        val audience = clientId // that's what Auth0 does
-        val clientSecret = environment.config.property("krussian.auth0.clientSecret").getString()
-        val callbackUrl = environment.config.property("krussian.auth0.callbackUrl").getString()
-    }
-
     install(Authentication) {
-        session<UserSession>("SESSION_AUTH") {
+        session<UserSession> {
             validate { session ->
                 // TODO: query the other fields or maybe remove them from the Principal?
                 UserPrincipal(
@@ -101,22 +96,9 @@ fun Application.module(testing: Boolean = false) {
         }
     }
 
-    val airtableClient = AirtableClient(
-            apiKey = environment.config.property("krussian.airtable.apiKey").getString(),
-            baseId = environment.config.property("krussian.airtable.baseId").getString()
-    )
-
     routing {
         get("/login") {
-            val u = URLBuilder("https://klazuka.us.auth0.com/authorize")
-            u.parameters.apply {
-                append("response_type", "code")
-                append("client_id", auth0.clientId)
-                append("redirect_uri", auth0.callbackUrl)
-                append("scope", "openid profile")
-                append("state", "foobar123")
-            }
-            call.respondRedirect(u.buildString())
+            call.respondRedirect(authClient.makeRedirectUrl())
         }
 
         get("/logout") {
@@ -128,49 +110,20 @@ fun Application.module(testing: Boolean = false) {
             val code = call.request.queryParameters["code"] ?: "?"
             // TODO: verify `state` parameter
 
-            val client = HttpClient(CIO) {
-                install(Logging) {
-                    level = LogLevel.ALL
-                }
-                install(JsonFeature) {
-                    serializer = GsonSerializer()
-                }
-            }
-            val resp = client.submitForm<AuthResponse>(
-                    url = "https://klazuka.us.auth0.com/oauth/token",
-                    formParameters = Parameters.build {
-                        append("code", code)
-                        append("grant_type", "authorization_code")
-                        append("client_id", auth0.clientId)
-                        append("client_secret", auth0.clientSecret)
-                        append("redirect_uri", auth0.callbackUrl)
-                    }
-            )
-
-            val verifier = JWT.require(Algorithm.HMAC256(auth0.clientSecret))
-                    .withAudience(auth0.audience)
-                    .withIssuer(auth0.domain)
-                    .build()
-            val decodedJWT = verifier.verify(resp.idToken)
-            val subject = decodedJWT.getClaim("sub").asString()
-            if (subject == null) {
-                call.respond(Unauthorized, "JWT missing 'sub' claim")
+            val subject = try {
+                authClient.exchangeAuthCodeForSubject(code)
+            } catch (e: Exception) {
+                call.respond(Unauthorized, e.message ?: "Unknown error")
                 return@get
             }
 
             call.sessions.set(UserSession(subject = subject))
-
             call.respondRedirect("/me")
         }
 
-        authenticate("SESSION_AUTH") {
+        authenticate {
             get("/me") {
-                val user = call.authentication.principal<UserPrincipal>()
-                if (user == null) {
-                    // TODO: lame
-                    call.respond(Unauthorized)
-                    return@get
-                }
+                val user = call.authentication.principal<UserPrincipal>()!!
                 log.info("Using principal: $user")
                 call.respondHtmlTemplate(AppTemplate(user)) {
                     pageTitle { +"Me" }
@@ -180,18 +133,6 @@ fun Application.module(testing: Boolean = false) {
                         p {
                             a(href = "/logout") { +"Logout" }
                         }
-                    }
-                }
-            }
-        }
-
-        authenticate("SESSION_AUTH", optional = true) {
-            get("/") {
-                call.respondHtmlTemplate(AppTemplate(call.principal())) {
-                    pageTitle { +"Home" }
-                    content {
-                        h3 { +"Home" }
-                        p { +"дом sweet дом" }
                     }
                 }
             }
@@ -267,6 +208,18 @@ fun Application.module(testing: Boolean = false) {
                             }
 
                         }
+                    }
+                }
+            }
+        }
+
+        authenticate(optional = true) {
+            get("/") {
+                call.respondHtmlTemplate(AppTemplate(call.principal())) {
+                    pageTitle { +"Home" }
+                    content {
+                        h3 { +"Home" }
+                        p { +"дом sweet дом" }
                     }
                 }
             }
