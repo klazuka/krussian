@@ -9,13 +9,24 @@ import io.ktor.client.features.json.JsonFeature
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.host
+import io.ktor.config.ApplicationConfig
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter.ISO_LOCAL_DATE
 
-class AirtableClient(
+interface AirtableClient {
+    suspend fun getDecks(): List<Deck>
+}
+
+class RealAirtableClient(
         val apiKey: String,
         val baseId: String
-) {
+) : AirtableClient {
+
+    constructor(config: ApplicationConfig) : this(
+            apiKey = config.property("krussian.airtable.apiKey").getString(),
+            baseId = config.property("krussian.airtable.baseId").getString()
+    )
+
     private val client = HttpClient(CIO) {
         defaultRequest {
             host = "api.airtable.com"
@@ -26,7 +37,7 @@ class AirtableClient(
         }
     }
 
-    suspend fun getDecks(): List<Deck> {
+    override suspend fun getDecks(): List<Deck> {
         val rawDecks: List<RawDeck> = getAll("Decks") { client.get<ListDecksResponse>(it) }
         val scores: List<Score> = getAll("Scores") { client.get<ListScoresResponse>(it) }
         return resolveDecks(rawDecks, scores)
