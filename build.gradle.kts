@@ -38,6 +38,7 @@ dependencies {
     fun ktor(module: String) = "io.ktor:ktor-$module:$ktorVersion"
     implementation(ktor("server-core"))
     implementation(ktor("server-netty"))
+    implementation(ktor("server-sessions"))
     implementation(ktor("html-builder"))
     implementation(ktor("gson"))
     implementation(ktor("server-host-common"))

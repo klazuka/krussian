@@ -5,10 +5,7 @@ import com.auth0.jwt.algorithms.Algorithm
 import com.auth0.jwt.interfaces.Payload
 import com.google.gson.annotations.SerializedName
 import io.ktor.application.*
-import io.ktor.auth.Authentication
-import io.ktor.auth.Principal
-import io.ktor.auth.authenticate
-import io.ktor.auth.authentication
+import io.ktor.auth.*
 import io.ktor.auth.jwt.jwt
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
@@ -23,9 +20,11 @@ import io.ktor.html.Placeholder
 import io.ktor.html.Template
 import io.ktor.html.insert
 import io.ktor.html.respondHtmlTemplate
+import io.ktor.http.HttpStatusCode.Companion.Unauthorized
 import io.ktor.http.Parameters
 import io.ktor.http.content.resources
 import io.ktor.http.content.static
+import io.ktor.response.respond
 import io.ktor.response.respondText
 import io.ktor.routing.get
 import io.ktor.routing.routing
@@ -33,6 +32,7 @@ import io.ktor.sessions.*
 import io.ktor.util.KtorExperimentalAPI
 import kotlinx.html.*
 import kotlinx.html.ThScope.col
+import java.io.File
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter.ISO_LOCAL_DATE
 import kotlin.math.roundToInt
@@ -66,7 +66,7 @@ data class UserPrincipal(
 }
 
 data class UserSession(
-        val accessToken: String
+        val subject: String
 )
 
 @KtorExperimentalAPI
@@ -100,10 +100,25 @@ fun Application.module(testing: Boolean = false) {
                 }
             }
         }
+
+        session<UserSession>("SESSION_AUTH") {
+            validate { session ->
+                // TODO: query the other fields or maybe remove them from the Principal?
+                UserPrincipal(
+                        name = null,
+                        nickname = null,
+                        subject = session.subject,
+                        pictureUrl = null
+                )
+            }
+        }
     }
 
     install(Sessions) {
-        cookie<UserSession>("KRUSSIAN_SESSION_ID", SessionStorageMemory()) {
+        cookie<UserSession>(
+                "KRUSSIAN_SESSION_ID",
+                directorySessionStorage(File(".sessions"), cached = true)
+        ) {
             cookie.path = "/"
         }
     }
@@ -123,9 +138,14 @@ fun Application.module(testing: Boolean = false) {
                 }
             }
         }
-        authenticate {
+        authenticate("SESSION_AUTH") {
             get("/me") {
-                val user = call.authentication.principal<UserPrincipal>()!! // TODO: safe?
+                val user = call.authentication.principal<UserPrincipal>()
+                if (user == null) {
+                    // TODO: lame
+                    call.respond(Unauthorized)
+                    return@get
+                }
                 log.info("Using principal: $user")
                 call.respondHtmlTemplate(AppTemplate(environment)) {
                     pageTitle { +"Me" }
@@ -160,7 +180,18 @@ fun Application.module(testing: Boolean = false) {
                     }
             )
 
-            call.sessions.set(UserSession(accessToken = resp.accessToken))
+            val verifier = JWT.require(Algorithm.HMAC256(auth0.clientSecret))
+                    .withAudience(auth0.audience)
+                    .withIssuer(auth0.domain)
+                    .build()
+            val decodedJWT = verifier.verify(resp.idToken)
+            val subject = decodedJWT.getClaim("sub").asString()
+            if (subject == null) {
+                call.respond(Unauthorized, "JWT missing 'sub' claim")
+                return@get
+            }
+
+            call.sessions.set(UserSession(subject = subject))
 
             call.respondText("done")
         }
