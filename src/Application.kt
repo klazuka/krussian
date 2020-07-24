@@ -1,15 +1,35 @@
 package com.klazuka
 
-import io.ktor.application.Application
-import io.ktor.application.call
+import com.auth0.jwt.JWT
+import com.auth0.jwt.algorithms.Algorithm
+import com.auth0.jwt.interfaces.Payload
+import com.google.gson.annotations.SerializedName
+import io.ktor.application.*
+import io.ktor.auth.Authentication
+import io.ktor.auth.Principal
+import io.ktor.auth.authenticate
+import io.ktor.auth.authentication
+import io.ktor.auth.jwt.jwt
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.cio.CIO
+import io.ktor.client.features.json.GsonSerializer
+import io.ktor.client.features.json.JsonFeature
+import io.ktor.client.features.logging.LogLevel
+import io.ktor.client.features.logging.Logging
+import io.ktor.client.request.forms.submitForm
+import io.ktor.features.ContentNegotiation
+import io.ktor.gson.gson
 import io.ktor.html.Placeholder
 import io.ktor.html.Template
 import io.ktor.html.insert
 import io.ktor.html.respondHtmlTemplate
+import io.ktor.http.Parameters
 import io.ktor.http.content.resources
 import io.ktor.http.content.static
+import io.ktor.response.respondText
 import io.ktor.routing.get
 import io.ktor.routing.routing
+import io.ktor.sessions.*
 import io.ktor.util.KtorExperimentalAPI
 import kotlinx.html.*
 import kotlinx.html.ThScope.col
@@ -19,10 +39,75 @@ import kotlin.math.roundToInt
 
 fun main(args: Array<String>): Unit = io.ktor.server.netty.EngineMain.main(args)
 
+data class AuthResponse(
+        @SerializedName("id_token")
+        val idToken: String,
+
+        @SerializedName("access_token")
+        val accessToken: String
+)
+
+data class UserPrincipal(
+        val subject: String,
+        val nickname: String?,
+        val name: String?,
+        val pictureUrl: String?
+) : Principal {
+    companion object {
+        fun fromJWT(payload: Payload): UserPrincipal {
+            return UserPrincipal(
+                    subject = payload.subject,
+                    nickname = payload.getClaim("nickname")?.asString(),
+                    name = payload.getClaim("name")?.asString(),
+                    pictureUrl = payload.getClaim("picture")?.asString()
+            )
+        }
+    }
+}
+
+data class UserSession(
+        val accessToken: String
+)
+
 @KtorExperimentalAPI
 @Suppress("unused")
 @kotlin.jvm.JvmOverloads
 fun Application.module(testing: Boolean = false) {
+    install(ContentNegotiation) {
+        gson {}
+    }
+
+    val auth0 = object {
+        val domain = environment.config.property("krussian.auth0.domain").getString()
+        val clientId = environment.config.property("krussian.auth0.clientId").getString()
+        val audience = clientId // that's what Auth0 does
+        val clientSecret = environment.config.property("krussian.auth0.clientSecret").getString()
+        val callbackUrl = environment.config.property("krussian.auth0.callbackUrl").getString()
+    }
+
+    install(Authentication) {
+        jwt {
+            realm = "krussian"
+            verifier(
+                    JWT.require(Algorithm.HMAC256(auth0.clientSecret))
+                            .withAudience(auth0.audience)
+                            .withIssuer(auth0.domain)
+                            .build())
+            validate { credential ->
+                when (auth0.audience) {
+                    in credential.payload.audience -> UserPrincipal.fromJWT(credential.payload)
+                    else -> null
+                }
+            }
+        }
+    }
+
+    install(Sessions) {
+        cookie<UserSession>("KRUSSIAN_SESSION_ID", SessionStorageMemory()) {
+            cookie.path = "/"
+        }
+    }
+
     val airtableClient = AirtableClient(
             apiKey = environment.config.property("krussian.airtable.apiKey").getString(),
             baseId = environment.config.property("krussian.airtable.baseId").getString()
@@ -30,7 +115,7 @@ fun Application.module(testing: Boolean = false) {
 
     routing {
         get("/") {
-            call.respondHtmlTemplate(AppTemplate()) {
+            call.respondHtmlTemplate(AppTemplate(environment)) {
                 pageTitle { +"Home" }
                 content {
                     h3 { +"Home" }
@@ -38,10 +123,51 @@ fun Application.module(testing: Boolean = false) {
                 }
             }
         }
+        authenticate {
+            get("/me") {
+                val user = call.authentication.principal<UserPrincipal>()!! // TODO: safe?
+                log.info("Using principal: $user")
+                call.respondHtmlTemplate(AppTemplate(environment)) {
+                    pageTitle { +"Me" }
+                    content {
+                        h3 { +"Me" }
+                        p { +user.subject }
+                    }
+                }
+            }
+        }
+
+        get("/callback") {
+            val code = call.request.queryParameters["code"] ?: "?"
+            // TODO: verify `state` parameter
+
+            val client = HttpClient(CIO) {
+                install(Logging) {
+                    level = LogLevel.ALL
+                }
+                install(JsonFeature) {
+                    serializer = GsonSerializer()
+                }
+            }
+            val resp = client.submitForm<AuthResponse>(
+                    url = "https://klazuka.us.auth0.com/oauth/token",
+                    formParameters = Parameters.build {
+                        append("code", code)
+                        append("grant_type", "authorization_code")
+                        append("client_id", auth0.clientId)
+                        append("client_secret", auth0.clientSecret)
+                        append("redirect_uri", auth0.callbackUrl)
+                    }
+            )
+
+            call.sessions.set(UserSession(accessToken = resp.accessToken))
+
+            call.respondText("done")
+        }
 
         get("/decks/all") {
             val decks = airtableClient.getDecks().sortedBy { it.dueDate }
-            call.respondHtmlTemplate(AppTemplate()) {
+            call.respondHtmlTemplate(AppTemplate(environment)) {
                 pageTitle { +"All Decks" }
                 content {
                     h2 { +"Decks" }
@@ -81,7 +207,7 @@ fun Application.module(testing: Boolean = false) {
             val decks = airtableClient.getDecks()
                     .filter { it.dueDate < LocalDate.now().plusDays(1) }
                     .sortedBy { it.dueDate }
-            call.respondHtmlTemplate(AppTemplate()) {
+            call.respondHtmlTemplate(AppTemplate(environment)) {
                 pageTitle { +"Due Decks" }
                 content {
                     h2 { +"Decks" }
@@ -115,7 +241,7 @@ fun Application.module(testing: Boolean = false) {
         }
 
         get("/resources") {
-            call.respondHtmlTemplate(AppTemplate()) {
+            call.respondHtmlTemplate(AppTemplate(environment)) {
                 pageTitle { +"Resources" }
                 content {
                     div(classes = "card") {
@@ -150,7 +276,7 @@ fun Application.module(testing: Boolean = false) {
     }
 }
 
-class AppTemplate : Template<HTML> {
+class AppTemplate(val environment: ApplicationEnvironment) : Template<HTML> {
     val content = Placeholder<HtmlBlockTag>()
     val pageTitle = Placeholder<TITLE>()
 
@@ -162,6 +288,7 @@ class AppTemplate : Template<HTML> {
             }
             link(rel = "stylesheet", href = "https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css")
         }
+        val loginUrl = "https://klazuka.us.auth0.com/authorize?response_type=code&client_id=${environment.config.property("krussian.auth0.clientId").getString()}&redirect_uri=${environment.config.property("krussian.auth0.callbackUrl").getString()}&scope=openid%20profile&state=foobar123"
         body {
             div(classes = "container") {
                 nav(classes = "navbar navbar-expand navbar-light bg-light mb-3") {
@@ -170,6 +297,9 @@ class AppTemplate : Template<HTML> {
                         a(classes = "nav-link", href = "/decks/due") { +"Decks" }
                         a(classes = "nav-link", href = "/resources") { +"Resources" }
                     }
+                }
+                p {
+                    a(href = loginUrl) { +"Login" }
                 }
                 insert(content)
             }
