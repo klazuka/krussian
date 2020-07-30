@@ -1,4 +1,4 @@
-package com.klazuka
+package com.klazuka.krussian.airtable
 
 import com.google.gson.annotations.SerializedName
 import io.ktor.client.HttpClient
@@ -14,7 +14,7 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter.ISO_LOCAL_DATE
 
 interface AirtableClient {
-    suspend fun getDecks(): List<Deck>
+    suspend fun getDecks(authSubject: String): List<Deck>
 }
 
 class RealAirtableClient(
@@ -37,10 +37,14 @@ class RealAirtableClient(
         }
     }
 
-    override suspend fun getDecks(): List<Deck> {
-        val rawDecks: List<RawDeck> = getAll("Decks") { client.get<ListDecksResponse>(it) }
+    override suspend fun getDecks(authSubject: String): List<Deck> {
+        val users: List<User> = getAll("Users") { client.get<ListUsersResponse>(it) }
+        val currentUser = users.find { it.fields.authSubject == authSubject }
+                ?: error("failed to find corresponding user in Airtable")
+        val decks: List<RawDeck> = getAll("Decks") { client.get<ListDecksResponse>(it) }
         val scores: List<Score> = getAll("Scores") { client.get<ListScoresResponse>(it) }
-        return resolveDecks(rawDecks, scores)
+        val myDecks = decks.filter { currentUser.id in it.fields.userRefs }
+        return resolveDecks(myDecks, scores)
     }
 
     /// Fetches all pages from the API.
@@ -107,6 +111,21 @@ abstract class AirtableResponse<T> {
     abstract val offset: String?
 }
 
+data class ListUsersResponse(
+        override val records: List<User>,
+        override val offset: String?
+) : AirtableResponse<User>()
+
+data class User(
+        val id: String,
+        val fields: UserFields
+)
+
+data class UserFields(
+        @SerializedName("ID")
+        val authSubject: String
+)
+
 data class ListDecksResponse(
         override val records: List<RawDeck>,
         override val offset: String?
@@ -125,7 +144,10 @@ data class DeckFields(
         val url: String,
 
         @SerializedName("Scores")
-        val scoreRefs: List<String>
+        val scoreRefs: List<String>,
+
+        @SerializedName("User")
+        val userRefs: List<String>
 )
 
 data class ListScoresResponse(

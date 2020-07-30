@@ -1,7 +1,9 @@
-package com.klazuka
+package com.klazuka.krussian.auth
 
 import com.auth0.jwt.JWT
 import com.auth0.jwt.algorithms.Algorithm
+import com.google.gson.annotations.SerializedName
+import io.ktor.auth.Principal
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.features.json.GsonSerializer
@@ -73,3 +75,23 @@ class RealAuthClient(config: ApplicationConfig) : AuthClient {
                 ?: error("JWT missing 'sub' claim")
     }
 }
+
+
+data class AuthResponse(
+        @SerializedName("id_token")
+        val idToken: String,
+
+        @SerializedName("access_token")
+        val accessToken: String
+)
+
+data class UserPrincipal(
+        val subject: String,
+        val nickname: String?,
+        val name: String?,
+        val pictureUrl: String?
+) : Principal
+
+data class UserSession(
+        val subject: String
+)

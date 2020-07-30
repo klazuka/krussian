@@ -1,4 +1,4 @@
-group = "com.klazuka"
+group = "com.klazuka.krussian"
 version = "0.0.1-SNAPSHOT"
 
 plugins {

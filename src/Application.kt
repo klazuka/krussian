@@ -1,6 +1,11 @@
-package com.klazuka
+package com.klazuka.krussian
 
-import com.google.gson.annotations.SerializedName
+import com.klazuka.krussian.airtable.AirtableClient
+import com.klazuka.krussian.airtable.RealAirtableClient
+import com.klazuka.krussian.auth.AuthClient
+import com.klazuka.krussian.auth.RealAuthClient
+import com.klazuka.krussian.auth.UserPrincipal
+import com.klazuka.krussian.auth.UserSession
 import io.ktor.application.Application
 import io.ktor.application.call
 import io.ktor.application.install
@@ -30,24 +35,6 @@ import kotlin.math.roundToInt
 
 fun main(args: Array<String>): Unit = io.ktor.server.netty.EngineMain.main(args)
 
-data class AuthResponse(
-        @SerializedName("id_token")
-        val idToken: String,
-
-        @SerializedName("access_token")
-        val accessToken: String
-)
-
-data class UserPrincipal(
-        val subject: String,
-        val nickname: String?,
-        val name: String?,
-        val pictureUrl: String?
-) : Principal
-
-data class UserSession(
-        val subject: String
-)
 
 @KtorExperimentalAPI
 @Suppress("unused")
@@ -138,7 +125,8 @@ fun Application.moduleWithDeps(
             }
 
             get("/decks/all") {
-                val decks = airtableClient.getDecks().sortedBy { it.dueDate }
+                val user = call.authentication.principal<UserPrincipal>()!!
+                val decks = airtableClient.getDecks(user.subject).sortedBy { it.dueDate }
                 call.respondHtmlTemplate(AppTemplate(call.principal())) {
                     pageTitle { +"All Decks" }
                     content {
@@ -176,7 +164,8 @@ fun Application.moduleWithDeps(
             }
 
             get("/decks/due") {
-                val decks = airtableClient.getDecks()
+                val user = call.authentication.principal<UserPrincipal>()!!
+                val decks = airtableClient.getDecks(user.subject)
                         .filter { it.dueDate < LocalDate.now().plusDays(1) }
                         .sortedBy { it.dueDate }
                 call.respondHtmlTemplate(AppTemplate(call.principal())) {
