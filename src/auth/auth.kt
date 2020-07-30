@@ -32,7 +32,7 @@ class RealAuthClient(config: ApplicationConfig) : AuthClient {
 
     private val client = HttpClient(CIO) {
         install(Logging) {
-            level = LogLevel.ALL
+            level = LogLevel.INFO
         }
         install(JsonFeature) {
             serializer = GsonSerializer()
